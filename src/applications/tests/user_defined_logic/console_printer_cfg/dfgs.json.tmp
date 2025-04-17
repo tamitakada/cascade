@@ -6,6 +6,12 @@
             {
                 "pathname": "/console_printer1",
                 "shard_dispatcher_list": ["one"],
+                "execution_environment": [
+                    {
+                        "mode": "pthread",
+                        "spec": {}
+                    }
+                ],
                 "user_defined_logic_list": ["48e60f7c-8500-11eb-8755-0242ac110002"],
                 "user_defined_logic_stateful": ["singlethreaded"],
                 "destinations": [{"/console_printer2" : "trigger_put" , "/console_printer3" : "trigger_put" }],

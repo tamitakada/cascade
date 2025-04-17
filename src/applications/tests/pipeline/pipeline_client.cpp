@@ -30,8 +30,8 @@ static std::set<std::string> collect_dfgs_object_pools() {
     for (const auto& dfg: DataFlowGraph::get_data_flow_graphs()) {
         for (const auto& v: dfg.vertices) {
             object_pools.emplace(v.first);
-            for (const auto& ekv: v.second.edges) {
-                for (const auto& tkv: ekv.second) {
+            for (const auto& per_ocdpo_edges: v.second.edges) {
+                for (const auto& tkv: per_ocdpo_edges) {
                     object_pools.emplace(tkv.first);
                 }
             }
@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     std::string member_selection_policy = argv[3];
     uint64_t max_rate_ops = std::stoul(argv[4]);
     uint64_t duration_sec = std::stoul(argv[5]);
-    uint64_t payload_size = derecho::getConfUInt64(CONF_DERECHO_MAX_P2P_REQUEST_PAYLOAD_SIZE);
+    uint64_t payload_size = derecho::getConfUInt64(derecho::Conf::DERECHO_MAX_P2P_REQUEST_PAYLOAD_SIZE);
 
     // 1 - create the workload.
     std::vector<ObjectWithStringKey> objects;
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
     uint64_t next_ns = 0;
     uint64_t end_ns = now_ns + duration_sec*1e9;
 #ifdef ENABLE_EVALUATION
-    node_id_t my_node_id = capi.get_my_id();
+    derecho::node_id_t my_node_id = capi.get_my_id();
     uint64_t msg_id = 0;
 #endif
 

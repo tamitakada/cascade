@@ -36,7 +36,7 @@ template <typename CascadeType>
 class CascadeServiceCDPO : public CriticalDataPathObserver<CascadeType> {
     virtual void operator()(const uint32_t sgidx,
                             const uint32_t shidx,
-                            const node_id_t sender_id,
+                            const derecho::node_id_t sender_id,
                             const typename CascadeType::KeyType& key,
                             const typename CascadeType::ObjectType& value,
                             ICascadeContext* cascade_ctxt,
@@ -44,8 +44,8 @@ class CascadeServiceCDPO : public CriticalDataPathObserver<CascadeType> {
         if constexpr(std::is_convertible<typename CascadeType::KeyType, std::string>::value) {
             using namespace derecho::cascade;
 
-            auto* ctxt = dynamic_cast<
-                    CascadeContext<
+            auto* engine = dynamic_cast<
+                    ExecutionEngine<
                             VolatileCascadeStoreWithStringKey,
                             PersistentCascadeStoreWithStringKey,
                             TriggerCascadeNoStoreWithStringKey>*>(cascade_ctxt);
@@ -55,56 +55,56 @@ class CascadeServiceCDPO : public CriticalDataPathObserver<CascadeType> {
                 // important: we need to keep the trailing PATH_SEPARATOR
                 prefix = key.substr(0, pos + 1);
             }
-            auto handlers = ctxt->get_prefix_handlers(prefix);
+            auto handlers = engine->get_prefix_handlers(prefix);
             if(handlers.empty()) {
                 return;
             }
             // filter for normal put (put/put_and_forget)
             bool new_actions = false;
+            bool has_mproc_udl = false;
             {
-                auto shard_members = ctxt->get_service_client_ref().template get_shard_members<CascadeType>(sgidx, shidx);
-                bool icare = (shard_members[std::hash<std::string>{}(key) % shard_members.size()] == ctxt->get_service_client_ref().get_my_id());
+                auto shard_members = engine->get_service_client_ref().template get_shard_members<CascadeType>(sgidx, shidx);
+                bool icare = (shard_members[std::hash<std::string>{}(key) % shard_members.size()] == engine->get_service_client_ref().get_my_id());
                 for(auto& per_prefix : handlers) {
                     // per_prefix.first is the matching prefix
-                    // per_prefix.second is a set of handlers
-                    for(auto it = per_prefix.second.cbegin(); it != per_prefix.second.cend();) {
-                        // it->first is handler uuid
-                        // it->second is a 5-tuple of shard dispatcher,stateful,hook,ocdpo,and outputs;
-#ifdef HAS_STATEFUL_UDL_SUPPORT
-                        if((std::get<2>(it->second) == DataFlowGraph::VertexHook::ORDERED_PUT && is_trigger) || (std::get<2>(it->second) == DataFlowGraph::VertexHook::TRIGGER_PUT && !is_trigger)) {
-#else
-                        if((std::get<1>(it->second) == DataFlowGraph::VertexHook::ORDERED_PUT && is_trigger) || (std::get<1>(it->second) == DataFlowGraph::VertexHook::TRIGGER_PUT && !is_trigger)) {
-#endif
-                            // not my hook, skip it.
-                            per_prefix.second.erase(it++);
-#ifdef HAS_STATEFUL_UDL_SUPPORT
-                        } else if((std::get<2>(it->second) != DataFlowGraph::VertexHook::ORDERED_PUT) && is_trigger) {
-#else
-                        } else if((std::get<1>(it->second) != DataFlowGraph::VertexHook::ORDERED_PUT) && is_trigger) {
-#endif
-                            new_actions = true;
-                            it++;
-                        } else {
-                            // HERE:
-                            // 1) trigger must be false
-                            // 2) std::get<1>(it->second) is either ORDERED_PUT or BOTH
-                            // so, do we do the following test:
-                            switch(std::get<0>(it->second)) {
-                                case DataFlowGraph::VertexShardDispatcher::ONE:
-                                    if(icare) {
+                    // per_prefix.second is an object of prefix_entry_t
+                    for(auto& dfg_ocdpos : per_prefix.second) {
+                        // dfg_ocdpos.first is dfg_id
+                        // dfg_ocdpos.second is a set of ocdpo info object of type prefix_ocdpo_info_t.
+                        for(auto oiit = dfg_ocdpos.second.begin(); oiit != dfg_ocdpos.second.end();) {
+                            if((oiit->hook != DataFlowGraph::VertexHook::BOTH) && (
+                                (oiit->hook == DataFlowGraph::VertexHook::ORDERED_PUT && is_trigger) || 
+                                (oiit->hook == DataFlowGraph::VertexHook::TRIGGER_PUT && !is_trigger))) {
+                                // not my hook, skip it.
+                                oiit = dfg_ocdpos.second.erase(oiit);
+                            } else if (is_trigger) {
+                                new_actions = true;
+                                if (oiit->execution_environment != 
+                                    DataFlowGraph::VertexExecutionEnvironment::PTHREAD) {
+                                    has_mproc_udl = true;
+                                }
+                                oiit++;
+                            } else {
+                                // matched ordered put data path
+                                // test dispatcher:
+                                switch(oiit->shard_dispatcher) {
+                                    case DataFlowGraph::VertexShardDispatcher::ONE:
+                                        if(icare) {
+                                            new_actions = true;
+                                            oiit++;
+                                        } else {
+                                            oiit = dfg_ocdpos.second.erase(oiit);
+                                        }
+                                        break;
+                                    case DataFlowGraph::VertexShardDispatcher::ALL:
                                         new_actions = true;
-                                        it++;
-                                    } else {
-                                        per_prefix.second.erase(it++);
-                                    }
-                                    break;
-                                case DataFlowGraph::VertexShardDispatcher::ALL:
-                                    new_actions = true;
-                                    it++;
-                                    break;
-                                default:
-                                    per_prefix.second.erase(it++);
-                                    break;
+                                        oiit++;
+                                        break;
+                                    default:
+                                        // unknown dispatcher.
+                                        oiit = dfg_ocdpos.second.erase(oiit);
+                                        break;
+                                }
                             }
                         }
                     }
@@ -113,49 +113,35 @@ class CascadeServiceCDPO : public CriticalDataPathObserver<CascadeType> {
             if(!new_actions) {
                 return;
             }
-            // copy data
+            // copy data TODO: test has_mproc_udl, if has_mproc_udl == true, copy it to shared space,
+            // otherwise, use simple make_shared() call.
             auto value_ptr = std::make_shared<typename CascadeType::ObjectType>(value);
             // create actions
             for(auto& per_prefix : handlers) {
                 // per_prefix.first is the matching prefix
-                // per_prefix.second is a set of handlers
-                for(const auto& handler : per_prefix.second) {
-                    // handler.first is handler uuid
-                    // handler.second is a 4,5-tuple of shard dispatcher,stateful,hook,ocdpo,and outputs;
-                    Action action(
-                            sender_id,
-                            key,
-                            per_prefix.first.size(),
-                            value.get_version(),
-                            value.get_adfg(),
-#ifdef HAS_STATEFUL_UDL_SUPPORT
-                            std::get<3>(handler.second),  // ocdpo
-#else
-                            std::get<2>(handler.second),  // ocdpo
-#endif
-                            value_ptr,
-#ifdef HAS_STATEFUL_UDL_SUPPORT
-                            std::get<4>(handler.second),  // required object pathnames
-                            std::get<5>(handler.second),  // outputs
-                            std::get<6>(handler.second),  // expected_execution_timeus
-#else
-                            std::get<3>(handler.second),  // required object pathnames
-                            std::get<4>(handler.second),  // outputs
-                            std::get<5>(handler.second),  // expected_execution_timeus
-#endif
-                    std::get<1>(handler.second),  // stateful
-                    is_trigger);
-
+                // per_prefix.second is an object of prefix_entry_t
+                for(const auto& dfg_ocdpos : per_prefix.second) {
+                    // dfg_ocdpos.first is dfg_id
+                    // dfg_ocdpos.second is a set of ocdpo info object of type prefix_ocdpo_info_t.
+                    for (const auto& oi : dfg_ocdpos.second) {
+                        Action action(
+                                sender_id,
+                                key,
+                                per_prefix.first.size(),
+                                value.get_version(),
+                                oi.ocdpo,  // ocdpo
+                                value_ptr,
+                                oi.output_map  // outputs
+                        );
+    
 #ifdef ENABLE_EVALUATION
-                    ActionPostExtraInfo apei;
-                    apei.uint64_val = 0;
-                    apei.info.is_trigger = is_trigger;
+                        ActionPostExtraInfo apei;
+                        apei.uint64_val = 0;
+                        apei.info.is_trigger = is_trigger;
 #endif
-
-#ifdef HAS_STATEFUL_UDL_SUPPORT
+    
 #ifdef ENABLE_EVALUATION
-                    apei.info.stateful = std::get<1>(handler.second);
-#endif
+                        apei.info.stateful = oi.statefulness;
 #endif
                     TimestampLogger::log(TLT_ACTION_POST_START,
                                          ctxt->get_service_client_ref().get_my_id(),

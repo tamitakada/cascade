@@ -189,8 +189,12 @@ class CascadeClientShell(cmd.Cmd):
                                     the key. The value will get rejected if the latest version of the key grows beyond
                                     previous_version.
         message_id:                 The message_id for the object.
-        blocking:                   optional blocking flag. Default to True.
-        trigger:                    optional trigger flag, Default to False.
+        blocking:                   optional blocking flag. Defaulted to True.
+        trigger:                    optional trigger flag, Defaulted to False.
+        as_trigger:                 optional as_trigger flag, Defaulted to False. This flag only applies when 'trigger'
+                                    flag is False. If 'trigger' == False and 'as_trigger' == True, the object will NOT
+                                    apply to the K/V store, which is similar to 'trigger' flag, but it will multicast
+                                    to all replicas and trigger the UDLs registerd on ordered data path.
         '''
         self.check_capi()
         args = arg.split()
@@ -205,6 +209,7 @@ class CascadeClientShell(cmd.Cmd):
             message_id = 0
             blocking = True
             trigger = False
+            as_trigger = False
             argpos = 2
             while argpos < len(args):
                 extra_option = args[argpos].split('=')
@@ -227,8 +232,10 @@ class CascadeClientShell(cmd.Cmd):
                     blocking = False
                 elif extra_option[0] == 'trigger' and ( extra_option[1].lower() == 'yes' or extra_option[1].lower() == 'true' or extra_option[1].lower() == 'on' or extra_option[1].lower() == '1'  ):
                     trigger = True
+                elif extra_option[0] == 'as_trigger' and ( extra_option[1].lower() == 'yes' or extra_option[1].lower() == 'true' or extra_option[1].lower() == 'on' or extra_option[1].lower() == '1'  ):
+                    as_trigger = True
                 argpos = argpos + 1
-            res = self.capi.put(args[0],bytes(args[1],'utf-8'),subgroup_type=subgroup_type,subgroup_index=subgroup_index,shard_index=shard_index,previous_version=previous_version,previous_version_by_key=previous_version_by_key,message_id=message_id,blocking=blocking,trigger=trigger)
+            res = self.capi.put(args[0],bytes(args[1],'utf-8'),subgroup_type=subgroup_type,subgroup_index=subgroup_index,shard_index=shard_index,previous_version=previous_version,previous_version_by_key=previous_version_by_key,message_id=message_id,blocking=blocking,trigger=trigger,as_trigger=as_trigger)
             if blocking and not trigger and res:
                 print(bcolors.OK + f"{res.get_result()}" + bcolors.RESET)
             elif trigger and not res:
@@ -655,7 +662,7 @@ class CascadeClientShell(cmd.Cmd):
 
     def do_create_object_pool(self, arg):
         '''
-        create_object_pool <pathname> <subgroup_type> <subgroup_index>
+        create_object_pool <pathname> <subgroup_type> <subgroup_index> [affinity_set_regex]
         ==================
         Create an object pool
 
@@ -665,6 +672,10 @@ class CascadeClientShell(cmd.Cmd):
                         PersistentCascadeStoreWithStringKey
                         TriggerCascadeNoStoreWithStringKey
         subgroup_index: the subgroup index
+        affinity_set_regex:
+                        affinity_set_regex, please follow hyperscan's syntax.
+                        Please see http://github.com/intel/hyperscan and
+                        https://intel.github.io/hyperscan/dev-reference/compilation.html
 
         '''
         self.check_capi()
@@ -673,7 +684,10 @@ class CascadeClientShell(cmd.Cmd):
             print(bcolors.FAIL + 'At least three arguments are required.' + bcolors.RESET)
         else:
             subgroup_index = int(args[2],0)
-            res = self.capi.create_object_pool(args[0],args[1],subgroup_index)
+            affinity_set_regex = ""
+            if len(args) >= 4:
+                affinity_set_regex=args[3]
+            res = self.capi.create_object_pool(args[0],args[1],subgroup_index,affinity_set_regex=affinity_set_regex)
             if res:
                 ver = res.get_result()
                 print(bcolors.OK + f"{ver}" + bcolors.RESET)
@@ -704,6 +718,24 @@ class CascadeClientShell(cmd.Cmd):
         else:
             res = self.capi.get_object_pool(args[0])
             print(bcolors.OK + f"{res}" + bcolors.RESET)
+
+    def do_remove_object_pool(self, arg):
+        '''
+        remove_object_pool <pathname>
+        ==================
+        remove an object pool
+        '''
+        self.check_capi()
+        args = arg.split()
+        if len(args) < 1:
+            print(bcolors.FAIL + 'At least one argument is required.' + bcolors.RESET)
+        else:
+            res = self.capi.remove_object_pool(args[0])
+            if res:
+                ver = res.get_result()
+                print(bcolors.OK + f"{ver}" + bcolors.RESET)
+            else:
+                print(bcolors.FAIL + "Something went wrong, remove_object_pool returns null." + bcolors.RESET)
 
     def do_timestamp_logger(self, arg):
         '''
@@ -750,7 +782,7 @@ class CascadeClientShell(cmd.Cmd):
             if len(args) < 2:
                 print(bcolors.FAIL + 'No filename is given.' + bcolors.RESET)
                 return
-            tl.flush(args[1],True)
+            tl.flush(args[1])
         else:
             print(bcolors.FAIL + f"Unknown timestamp_logger command: {cmd}." + bcolors.RESET)
 

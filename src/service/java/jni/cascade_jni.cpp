@@ -92,7 +92,7 @@ derecho::cascade::ServiceClientAPI *get_api(JNIEnv *env, jobject obj)
 /**
  * Translate a C++ int vector to a Java Integer List.
  */
-jobject cpp_int_vector_to_java_list(JNIEnv *env, std::vector<node_id_t> vec)
+jobject cpp_int_vector_to_java_list(JNIEnv *env, std::vector<derecho::node_id_t> vec)
 {
     // create a Java array list
     jclass arr_list_cls = env->FindClass("java/util/ArrayList");
@@ -108,7 +108,7 @@ jobject cpp_int_vector_to_java_list(JNIEnv *env, std::vector<node_id_t> vec)
     jmethodID integer_init_mid = env->GetMethodID(integer_cls, "<init>", "(I)V");
 
     // fill everything in
-    for (node_id_t id : vec)
+    for (derecho::node_id_t id : vec)
     {
         jobject int_obj = env->NewObject(integer_cls, integer_init_mid, id);
         env->CallObjectMethod(arr_obj, list_add_mid, int_obj);
@@ -125,7 +125,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_Client_getMembers(JNIEnv *env, jobject
 {
     // get members first!
     derecho::cascade::ServiceClientAPI *capi = get_api(env, obj);
-    std::vector<node_id_t> members = capi->get_members();
+    std::vector<derecho::node_id_t> members = capi->get_members();
 
     // create an array list
     return cpp_int_vector_to_java_list(env, members);
@@ -141,7 +141,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_Client_getShardMembers__JJ(JNIEnv *env
 {
     // get shard members in C++
     derecho::cascade::ServiceClientAPI *capi = get_api(env, obj);
-    std::vector<node_id_t> members = capi->get_shard_members(subgroupID, shardID);
+    std::vector<derecho::node_id_t> members = capi->get_shard_members(subgroupID, shardID);
 
     // create an array list
     return cpp_int_vector_to_java_list(env, members);
@@ -168,7 +168,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_Client_getShardMembers(JNIEnv *env, jo
     // get the value of the service type
     int service_type = get_int_value(env, j_service_type);
     derecho::cascade::ServiceClientAPI *capi = get_api(env, obj);
-    std::vector<node_id_t> members;
+    std::vector<derecho::node_id_t> members;
 
     // call get shard members
     on_service_type(service_type, members = capi->get_shard_members, subgroup_index, shard_index);
@@ -219,7 +219,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_Client_getMemberSelectionPolicy(JNIEnv
     on_service_type(service_type, policy = capi->get_member_selection_policy, subgroup_index, shard_index);
 
     std::string java_policy_str;
-    switch (std::get<0>(policy))
+    switch (static_cast<int>(std::get<0>(policy)))
     {
     case derecho::cascade::ShardMemberSelectionPolicy::FirstMember:
         java_policy_str = "FirstMember";
@@ -261,7 +261,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_Client_getMemberSelectionPolicy(JNIEnv
     return ret;
 }
 
-/** 
+/**
  * QueryResultHolder stores the handle for the return value of QueryResults object.
  */
 template <typename T>
@@ -355,19 +355,19 @@ jlong put(std::function<std::unique_ptr<typename T::ObjectType>(JNIEnv *, jobjec
     std::cout << "putting! " << subgroup_index << " " << shard_index << std::endl;
 #endif
     // execute the put
-    derecho::rpc::QueryResults<std::tuple<persistent::version_t, uint64_t>> res = capi->put<T>(*obj, subgroup_index, shard_index);
+    derecho::rpc::QueryResults<derecho::cascade::version_tuple> res = capi->put<T>(*obj, subgroup_index, shard_index);
     //store the result in a handler and return it!
 #ifndef NDEBUG
     std::cout << "finished put!" << std::endl;
 #endif
-    QueryResultHolder<std::tuple<persistent::version_t, uint64_t>> *qrh = new QueryResultHolder<std::tuple<persistent::version_t, uint64_t>>(res);
+    QueryResultHolder<derecho::cascade::version_tuple> *qrh = new QueryResultHolder<derecho::cascade::version_tuple>(res);
     return reinterpret_cast<jlong>(qrh);
 }
 
 template <typename ServiceType>
 jlong create_object_pool(derecho::cascade::ServiceClientAPI* capi, const std::string& pathname, uint32_t subgroup_index, derecho::cascade::sharding_policy_t sharding_policy, const std::unordered_map<std::string,uint32_t>& object_locations) {
     auto res = capi->create_object_pool<ServiceType>(pathname,subgroup_index,sharding_policy,object_locations);
-    QueryResultHolder<std::tuple<persistent::version_t, uint64_t>> *qrh = new QueryResultHolder<std::tuple<persistent::version_t, uint64_t>>(res);
+    QueryResultHolder<derecho::cascade::version_tuple> *qrh = new QueryResultHolder<derecho::cascade::version_tuple>(res);
     return reinterpret_cast<jlong>(qrh);
 }
 
@@ -493,9 +493,9 @@ jlong remove(JNIEnv *env, derecho::cascade::ServiceClientAPI *capi, jlong subgro
     // translate the key
     typename T::KeyType obj = f(env, key);
     // execute remove
-    derecho::rpc::QueryResults<std::tuple<persistent::version_t, uint64_t>> res = capi->remove<T>(obj, subgroup_index, shard_index);
+    derecho::rpc::QueryResults<derecho::cascade::version_tuple> res = capi->remove<T>(obj, subgroup_index, shard_index);
     // store the results in a handle
-    QueryResultHolder<std::tuple<persistent::version_t, uint64_t>> *qrh = new QueryResultHolder<std::tuple<persistent::version_t, uint64_t>>(res);
+    QueryResultHolder<derecho::cascade::version_tuple> *qrh = new QueryResultHolder<derecho::cascade::version_tuple>(res);
     return reinterpret_cast<jlong>(qrh);
 }
 
@@ -712,9 +712,9 @@ JNIEXPORT jobject JNICALL Java_io_cascade_QueryResults_getReplyMap(JNIEnv *env, 
     jint mode = env->GetIntField(obj, mode_fid);
 
     // lambda that translates into bundle types
-    auto bundle_f = [env](std::tuple<persistent::version_t, uint64_t> obj) {
+    auto bundle_f = [env](derecho::cascade::version_tuple obj) {
 
-#ifndef NDEBUG   
+#ifndef NDEBUG
         std::cout << "converting bundles with string keys!" << std::endl;
 #endif
 
@@ -751,7 +751,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_QueryResults_getReplyMap(JNIEnv *env, 
         jobject new_byte_buf = allocate_byte_buffer(env, (char *)data, size);
         jclass obj_class = env->FindClass("io/cascade/CascadeObject");
         jmethodID obj_constructor = env->GetMethodID(obj_class, "<init>", "(JJJJLjava/nio/ByteBuffer;)V");
-        return env->NewObject(obj_class, 
+        return env->NewObject(obj_class,
                               obj_constructor,
                               static_cast<jlong>(obj.version),
                               static_cast<jlong>(obj.timestamp_us),
@@ -783,7 +783,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_QueryResults_getReplyMap(JNIEnv *env, 
             std::cout << "key: " << *it << " ";
 #endif
             jobject direct_buffer_obj = allocate_byte_buffer_by_copy(env, &(*it)[0], (*it).length());
-            
+
             env->CallObjectMethod(arr_obj, list_add_mid, direct_buffer_obj);
             it++;
         }
@@ -801,7 +801,7 @@ JNIEXPORT jobject JNICALL Java_io_cascade_QueryResults_getReplyMap(JNIEnv *env, 
     {
     // bundle
     case 0:
-        create_object_from_query<std::tuple<persistent::version_t, uint64_t>>(env, handle, hash_map_object, bundle_f);
+        create_object_from_query<derecho::cascade::version_tuple>(env, handle, hash_map_object, bundle_f);
         break;
     // buffers
     case 1:
@@ -875,7 +875,7 @@ static void javaMapToStlMap(JNIEnv *env, jobject map, std::unordered_map<std::st
   if (getValue == NULL) {
     return;
   }
-  jmethodID intValue = 
+  jmethodID intValue =
       env->GetMethodID(entryClass, "intvalue", "()I;");
   if (intValue == NULL) {
       return;
@@ -935,8 +935,8 @@ JNIEXPORT void JNICALL Java_io_cascade_QueryResults_closeHandle (JNIEnv* env, jo
     switch(mode) {
         case 0:
             {
-                QueryResultHolder<std::tuple<persistent::version_t, uint64_t>>* qrh =
-                    reinterpret_cast<QueryResultHolder<std::tuple<persistent::version_t, uint64_t>>*>(jhandle);
+                QueryResultHolder<derecho::cascade::version_tuple>* qrh =
+                    reinterpret_cast<QueryResultHolder<derecho::cascade::version_tuple>*>(jhandle);
                 if (qrh != nullptr) {
                     delete qrh;
                 }
@@ -944,7 +944,7 @@ JNIEXPORT void JNICALL Java_io_cascade_QueryResults_closeHandle (JNIEnv* env, jo
             break;
         case 1:
             {
-                QueryResultHolder<derecho::cascade::ObjectWithStringKey>* qrh = 
+                QueryResultHolder<derecho::cascade::ObjectWithStringKey>* qrh =
                     reinterpret_cast<QueryResultHolder<derecho::cascade::ObjectWithStringKey>*>(jhandle);
                 if (qrh != nullptr) {
                     delete qrh;
@@ -953,7 +953,7 @@ JNIEXPORT void JNICALL Java_io_cascade_QueryResults_closeHandle (JNIEnv* env, jo
             break;
         case 2:
             {
-                QueryResultHolder<std::vector<derecho::cascade::ObjectWithStringKey>>* qrh = 
+                QueryResultHolder<std::vector<derecho::cascade::ObjectWithStringKey>>* qrh =
                     reinterpret_cast<QueryResultHolder<std::vector<derecho::cascade::ObjectWithStringKey>>*>(jhandle);
                 if (qrh != nullptr) {
                     delete qrh;

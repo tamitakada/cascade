@@ -27,7 +27,6 @@ template <typename KeyType>
 inline std::string get_pathname(const KeyType& key);
 
 #ifdef ENABLE_EVALUATION
-#define NUMBER_OF_DISTINCT_OBJECTS (4096)
 
 /**
  * This is a hidden API.
@@ -45,12 +44,12 @@ struct TestVTConstructor {
 };
 
 template <typename KT, typename VT>
-void make_workload(uint32_t payload_size, const KT& key_prefix, std::vector<VT>& objects) {
+void make_workload(uint32_t payload_size, uint32_t num_distinct_objects, const KT& key_prefix, std::vector<VT>& objects) {
     if constexpr(TestVTConstructor<KT, VT>::value) {
         const uint32_t buf_size = payload_size - 128 - sizeof(key_prefix);
         uint8_t* buf = (uint8_t*)malloc(buf_size);
         memset(buf, 'A', buf_size);
-        for(uint32_t i = 0; i < NUMBER_OF_DISTINCT_OBJECTS; i++) {
+        for(uint32_t i = 0; i < num_distinct_objects; i++) {
             if constexpr(std::is_convertible_v<KT, std::string>) {
                 objects.emplace_back(key_prefix + std::to_string(i), buf, buf_size);
             } else if constexpr(std::is_integral_v<KT>) {
@@ -68,30 +67,29 @@ void make_workload(uint32_t payload_size, const KT& key_prefix, std::vector<VT>&
 
 #if __cplusplus > 201703L
 // C++ 20
-#define LOG_TIMESTAMP_BY_TAG(t, g, v, ...)                                                      \
-    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {            \
-        TimestampLogger::log(t,                                                                  \
-                                    g->get_my_id(),                                             \
-                                    dynamic_cast<const IHasMessageID*>(&(v))->get_message_id(), \
-                                    get_walltime()                                              \
-                                            __VA_OPT__(, ) __VA_ARGS__);                        \
+#define LOG_TIMESTAMP_BY_TAG(t, g, v, ...)                                              \
+    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {    \
+        TimestampLogger::log(t,                                                         \
+                             g->get_my_id(),                                            \
+                             dynamic_cast<const IHasMessageID*>(&(v))->get_message_id() \
+                             __VA_OPT__(, ) __VA_ARGS__);                               \
     }
 #else
 // C++ 17
-#define LOG_TIMESTAMP_BY_TAG(t, g, v)                                                           \
-    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {            \
-        TimestampLogger::log(t,                                                                  \
-                                    g->get_my_id(),                                             \
-                                    dynamic_cast<const IHasMessageID*>(&(v))->get_message_id(), \
-                                    get_walltime());                                            \
+#define LOG_TIMESTAMP_BY_TAG(t, g, v)                                                   \
+    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {    \
+        TimestampLogger::log(t,                                                         \
+                             g->get_my_id(),                                            \
+                             dynamic_cast<const IHasMessageID*>(&(v))->get_message_id() \
+        );                                                                              \
     }
 
-#define LOG_TIMESTAMP_BY_TAG_EXTRA(t, g, v, e)                                                  \
-    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {            \
-        TimestampLogger::log(t,                                                                  \
-                                    g->get_my_id(),                                             \
-                                    dynamic_cast<const IHasMessageID*>(&(v))->get_message_id(), \
-                                    get_walltime(), e);                                         \
+#define LOG_TIMESTAMP_BY_TAG_EXTRA(t, g, v, e)                                          \
+    if constexpr(std::is_base_of<IHasMessageID, std::decay_t<decltype(v)>>::value) {    \
+        TimestampLogger::log(t,                                                         \
+                             g->get_my_id(),                                            \
+                             dynamic_cast<const IHasMessageID*>(&(v))->get_message_id(),\
+                             e);                                                        \
     }
 
 #endif  //__cplusplus > 201703L
@@ -108,7 +106,7 @@ void make_workload(uint32_t payload_size, const KT& key_prefix, std::vector<VT>&
 #endif  // ENABLE_EVALUATION
 
 template <typename KeyType>
-std::string get_pathname(const std::enable_if_t<std::is_convertible<KeyType, std::string>::value, std::string>& key) {
+std::string get_pathname(const std::enable_if_t<std::is_convertible<KeyType, std::string>::value, KeyType>& key) {
     const std::string* pstr = dynamic_cast<const std::string*>(&key);
     size_t pos = pstr->rfind(PATH_SEPARATOR);
     if(pos != std::string::npos) {

@@ -66,8 +66,13 @@ if [[ $1 == "Clean" ]]; then
 fi
 
 build_type=$1
-install_prefix="/home/yy354/opt-dev/"
-cmake_defs="-DCMAKE_BUILD_TYPE=${build_type} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_INSTALL_PREFIX=${install_prefix}"
+if [ -z $CASCADE_INSTALL_PREFIX ]; then
+    install_prefix="/usr/local"
+else
+    install_prefix=$CASCADE_INSTALL_PREFIX
+fi
+
+cmake_defs="-DCMAKE_BUILD_TYPE=${build_type} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_INSTALL_PREFIX=${install_prefix} -Dpybind11_DIR=`pybind11-config --cmakedir`"
 build_path="build-${build_type}"
 
 if [[ $2 == "USE_VERBS_API" ]]; then
@@ -75,9 +80,14 @@ if [[ $2 == "USE_VERBS_API" ]]; then
 fi
 
 # begin building...
+rm -rf ${install_prefix}/include/cascade ${install_prefix}/lib/libcascade* ${install_prefix}/lib/cmake/cascade
 rm -rf ${build_path} 2>/dev/null
 mkdir ${build_path}
 cd ${build_path}
 cmake ${cmake_defs} ..
-make -j `nproc` 2>err.log
+NPROC=`nproc`
+if [ $NPROC -lt 2 ]; then
+    NPROC=2
+fi
+make -j `expr $NPROC - 1` 2>err.log
 cd ..
